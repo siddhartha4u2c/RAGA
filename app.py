@@ -904,6 +904,12 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
         return f"Sorry, I couldn't get a reply right now: {str(e)}"
 
 
+@app.route("/health")
+def health():
+    """Lightweight health check for Render; no session or template."""
+    return "", 200
+
+
 @app.route("/")
 def index():
     return render_template("index.html")

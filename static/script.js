@@ -35,7 +35,8 @@
       welcomeBody: "Choose a language, then type or use the mic.",
       attachedLabel: "Attached:",
       clearUploads: "Clear",
-      shareLink: "🔗 Share link (optional)"
+      shareLink: "🔗 Share link (optional)",
+      mobileVoiceHint: "Voice input is not available on this device. Please type your message above."
     },
     hi: {
       tagline: "अपनी भाषा में बोलें या टाइप करें",
@@ -57,7 +58,8 @@
       welcomeBody: "भाषा चुनें, फिर टाइप करें या माइक इस्तेमाल करें। आवाज़ में पूछें तो आवाज़ में जवाब; टाइप करें तो लिखित जवाब।",
       attachedLabel: "संलग्न:",
       clearUploads: "साफ़ करें",
-      shareLink: "🔗 लिंक साझा करें (वैकल्पिक)"
+      shareLink: "🔗 लिंक साझा करें (वैकल्पिक)",
+      mobileVoiceHint: "इस डिवाइस पर आवाज़ इनपुट उपलब्ध नहीं है। कृपया ऊपर अपना संदेश टाइप करें।"
     },
     as: {
       tagline: "আপোনাৰ ভাষাত কৈ বা টাইপ কৰক",
@@ -79,7 +81,8 @@
       welcomeBody: "ভাষা বাছক, তাৰ পিছত টাইপ কৰক বা মাইক ব্যৱহাৰ কৰক। কণ্ঠত সুধিলে কণ্ঠত উত্তৰ; টাইপ কৰিলে লিখিত উত্তৰ।",
       attachedLabel: "সংলগ্ন:",
       clearUploads: "পৰিষ্কাৰ কৰক",
-      shareLink: "🔗 লিংক শ্বেয়াৰ কৰক (বৈকল্পিক)"
+      shareLink: "🔗 লিংক শ্বেয়াৰ কৰক (বৈকল্পিক)",
+      mobileVoiceHint: "এই ডিভাইচত কণ্ঠ ইনপুট উপলব্ধ নহয়। অনুগ্ৰহ কৰি ওপৰত আপোনাৰ বাৰ্তা টাইপ কৰক।"
     },
     bn: {
       tagline: "আপনার ভাষায় বলুন বা টাইপ করুন",
@@ -101,7 +104,8 @@
       welcomeBody: "ভাষা বেছে নিন, তারপর টাইপ করুন বা মাইক ব্যবহার করুন। কণ্ঠে জিজ্ঞাসা করলে কণ্ঠে উত্তর।",
       attachedLabel: "সংযুক্ত:",
       clearUploads: "সাফ করুন",
-      shareLink: "🔗 লিংক শেয়ার করুন (ঐচ্ছিক)"
+      shareLink: "🔗 লিংক শেয়ার করুন (ঐচ্ছিক)",
+      mobileVoiceHint: "এই ডিভাইসে ভয়েস ইনপুট উপলব্ধ নয়। অনুগ্রহ করে উপরে আপনার বার্তা টাইপ করুন।"
     },
     te: {
       tagline: "మీ భాషలో మాట్లాడండి లేదా టైప్ చేయండి",
@@ -122,7 +126,8 @@
       welcomeTitle: "నమస్కారం!",
       welcomeBody: "భాష ఎంచుకోండి, ఆపై టైప్ చేయండి లేదా మైక్ ఉపయోగించండి।",
       attachedLabel: "అటాచ్ చేయబడింది:",
-      clearUploads: "క్లియర్"
+      clearUploads: "క్లియర్",
+      mobileVoiceHint: "ఈ డివైస్‌లో వాయిస్ ఇన్‌పుట్ అందుబాటులో లేదు. దయచేసి మీ సందేశాన్ని పైన టైప్ చేయండి."
     },
     mr: {
       tagline: "तुमच्या भाषेत बोला किंवा टाइप करा",
@@ -166,7 +171,8 @@
       welcomeBody: "மொழியைத் தேர்ந்தெடுங்கள், பின்னர் தட்டச்சு செய்யுங்கள் அல்லது மைக் பயன்படுத்துங்கள்।",
       attachedLabel: "இணைக்கப்பட்டது:",
       clearUploads: "அழி",
-      shareLink: "🔗 இணைப்பைப் பகிரவும் (விரும்பினால்)"
+      shareLink: "🔗 இணைப்பைப் பகிரவும் (விரும்பினால்)",
+      mobileVoiceHint: "இந்த சாதனத்தில் குரல் உள்ளீடு கிடைக்கவில்லை. மேலே உங்கள் செய்தியை தட்டச்சு செய்யுங்கள்."
     },
     gu: {
       tagline: "તમારી ભાષામાં બોલો અથવા ટાઇપ કરો",
@@ -188,7 +194,8 @@
       welcomeBody: "ભાષા પસંદ કરો, પછી ટાઇપ કરો અથવા માઇક વાપરો।",
       attachedLabel: "જોડેલ:",
       clearUploads: "સાફ કરો",
-      shareLink: "🔗 લિંક શેર કરો (વૈકલ્પિક)"
+      shareLink: "🔗 લિંક શેર કરો (વૈકલ્પિક)",
+      mobileVoiceHint: "આ ઉપકરણ પર વૉઇસ ઇનપુટ ઉપલબ્ધ નથી. કૃપા કરીને ઉપર તમારો સંદેશ ટાઇપ કરો."
     },
     kn: {
       tagline: "ನಿಮ್ಮ ಭಾಷೆಯಲ್ಲಿ ಮಾತನಾಡಿ ಅಥವಾ ಟೈಪ್ ಮಾಡಿ",
@@ -210,7 +217,8 @@
       welcomeBody: "ಭಾಷೆ ಆಯ್ಕೆಮಾಡಿ, ನಂತರ ಟೈಪ್ ಮಾಡಿ ಅಥವಾ ಮೈಕ್ ಬಳಸಿ।",
       attachedLabel: "ಲಗತ್ತಿಸಲಾಗಿದೆ:",
       clearUploads: "ತೆರವುಗೊಳಿಸಿ",
-      shareLink: "🔗 ಲಿಂಕ್ ಶೇರ್ ಮಾಡಿ (ಐಚ್ಛಿಕ)"
+      shareLink: "🔗 ಲಿಂಕ್ ಶೇರ್ ಮಾಡಿ (ಐಚ್ಛಿಕ)",
+      mobileVoiceHint: "ಈ ಸಾಧನದಲ್ಲಿ ಧ್ವನಿ ಇನ್‌ಪುಟ್ ಲಭ್ಯವಿಲ್ಲ. ದಯವಿಟ್ಟು ಮೇಲೆ ನಿಮ್ಮ ಸಂದೇಶ ಟೈಪ್ ಮಾಡಿ."
     },
     ml: {
       tagline: "നിങ്ങളുടെ ഭാഷയിൽ സംസാരിക്കുകയോ ടൈപ്പ് ചെയ്യുകയോ ചെയ്യുക",
@@ -232,7 +240,8 @@
       welcomeBody: "ഭാഷ തിരഞ്ഞെടുക്കുക, പിന്നീട് ടൈപ്പ് ചെയ്യുക അല്ലെങ്കിൽ മൈക്ക് ഉപയോഗിക്കുക।",
       attachedLabel: "അറ്റാച്ച് ചെയ്തത്:",
       clearUploads: "മായ്ക്കുക",
-      shareLink: "🔗 ലിങ്ക് പങ്കിടുക (ഓപ്ഷണൽ)"
+      shareLink: "🔗 ലിങ്ക് പങ്കിടുക (ഓപ്ഷണൽ)",
+      mobileVoiceHint: "ഈ ഉപകരണത്തിൽ വോയ്‌സ് ഇൻപുട്ട് ലഭ്യമല്ല. മുകളിൽ നിങ്ങളുടെ സന്ദേശം ടൈപ്പ് ചെയ്യുക."
     },
     pa: {
       tagline: "ਆਪਣੀ ਭਾਸ਼ਾ ਵਿੱਚ ਬੋਲੋ ਜਾਂ ਟਾਈਪ ਕਰੋ",
@@ -254,7 +263,8 @@
       welcomeBody: "ਭਾਸ਼ਾ ਚੁਣੋ, ਫਿਰ ਟਾਈਪ ਕਰੋ ਜਾਂ ਮਾਈਕ ਵਰਤੋ।",
       attachedLabel: "ਅਟੈਚ ਕੀਤਾ:",
       clearUploads: "ਸਾਫ਼ ਕਰੋ",
-      shareLink: "🔗 ਲਿੰਕ ਸਾਂਝਾ ਕਰੋ (ਵਿਕਲਪਿਕ)"
+      shareLink: "🔗 ਲਿੰਕ ਸਾਂਝਾ ਕਰੋ (ਵਿਕਲਪਿਕ)",
+      mobileVoiceHint: "ਇਸ ਡਿਵਾਈਸ 'ਤੇ ਵੌਇਸ ਇਨਪੁੱਟ ਉਪਲਬਧ ਨਹੀਂ। ਕਿਰਪਾ ਕਰਕੇ ਆਪਣਾ ਸੰਦੇਸ਼ ਉੱਪਰ ਟਾਈਪ ਕਰੋ।"
     }
   };
 
@@ -779,11 +789,23 @@
 
   ensureSession().then(() => {});
   initVoice();
-  if (isMobileDevice()) {
+  function updateMobileVoiceHint() {
+    if (!isMobileDevice()) return;
     var mobileHint = document.getElementById("mobileVoiceHint");
-    if (mobileHint && voiceBtn.disabled) {
-      mobileHint.textContent = "Voice input is not available on this device. Please type your message above.";
+    if (!mobileHint || !voiceBtn) return;
+    if (voiceBtn.disabled) {
+      mobileHint.textContent = getUIString(getLang().code, "mobileVoiceHint");
       mobileHint.style.display = "block";
+    } else {
+      mobileHint.style.display = "none";
     }
+  }
+  if (isMobileDevice()) updateMobileVoiceHint();
+
+  // When language changes, refresh the mobile voice hint text
+  if (langSelect) {
+    langSelect.addEventListener("change", function () {
+      setTimeout(updateMobileVoiceHint, 0);
+    });
   }
 })();

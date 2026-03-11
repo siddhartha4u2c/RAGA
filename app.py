@@ -79,8 +79,8 @@ def add_message(session_id: str, role: str, content: str):
     if session_id not in SESSION_MEMORY:
         SESSION_MEMORY[session_id] = []
     SESSION_MEMORY[session_id].append({"role": role, "content": content})
-    # Keep only last N turns to limit memory (e.g. last 20 messages)
-    max_messages = 50
+    # Keep last N messages so the model has full context for coherent, context-aware replies
+    max_messages = 60
     if len(SESSION_MEMORY[session_id]) > max_messages:
         SESSION_MEMORY[session_id] = SESSION_MEMORY[session_id][-max_messages:]
 
@@ -755,7 +755,10 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
         "For normal questions do not use these tags. "
         "When the user asks for code (any programming language): write the code itself always in English (keywords, syntax, variable/function names as in standard practice). "
         "Explanations before or after the code, and comments inside the code, may be in the user's selected language ({lang_name}). "
-        f"Today's date is {today}. The current date and time in India (IST) right now is: {ist_date_str}, {ist_time_str}. When the user asks for the current date, time, or date and time in India, use this exact value—do not use search results or guess. This conversation has no memory outside this session."
+        f"Today's date is {today}. The current date and time in India (IST) right now is: {ist_date_str}, {ist_time_str}. When the user asks for the current date, time, or date and time in India, use this exact value—do not use search results or guess. "
+        "You receive the full conversation history for this session below. Use it to give coherent, context-aware answers. "
+        "When the user refers to something earlier (e.g. 'that', 'it', 'the same', 'explain more', 'what about the second point', 'the link I shared', 'the document I attached'), use the previous messages to understand what they mean and answer accordingly. "
+        "Do not ask the user to repeat or re-share context that is already in the conversation. This session has no memory outside this chat."
     )
     api_messages = [{"role": "system", "content": system}]
     if is_voice_input and lang_name and lang_name.lower() != "english":
@@ -833,7 +836,10 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
         api_messages.append({"role": m["role"], "content": content})
 
     try:
-        max_completion_tokens = 900 if (link_context or web_search_context) else 600
+        # Allow longer replies when there is link/web context or when conversation has history (for coherent, context-aware answers)
+        has_extra_context = bool(link_context or web_search_context)
+        has_conversation_history = len(messages) > 2
+        max_completion_tokens = 900 if has_extra_context else (700 if has_conversation_history else 600)
         r = client.chat.completions.create(
             model=os.environ.get("OPENAI_MODEL", "gpt-5.3-chat-latest"),
             messages=api_messages,

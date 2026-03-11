@@ -97,3 +97,5 @@ The repo includes a **Procfile** and **runtime.txt** so Render knows how to run 
 | `OPENAI_MODEL`     | No       | Model name (default: `gpt-5.3-chat-latest`)               |
 
 Without `OPENAI_API_KEY`, the bot still runs and returns a short welcome message so you can test the UI and voice/text flow.
+
+**Microphone on Render (or any HTTPS site):** The mic works over HTTPS. When you click the mic button, your browser will ask for microphone permission—choose **Allow**. If the mic still doesn’t activate, check the site’s permission in your browser (e.g. Chrome: lock icon → Site settings → Microphone). Use **Chrome or Edge** for best support; Safari and Firefox have limited support for the Web Speech API.

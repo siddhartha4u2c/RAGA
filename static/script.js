@@ -552,6 +552,16 @@
       voiceBtn.disabled = true;
       return;
     }
+    if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
+      voiceBtn.title = "Microphone not supported. Use HTTPS and a modern browser (Chrome, Edge).";
+      voiceBtn.disabled = true;
+      return;
+    }
+    if (!window.isSecureContext && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1") {
+      voiceBtn.title = "Microphone requires HTTPS. Open this site via https://";
+      voiceBtn.disabled = true;
+      return;
+    }
     recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = false;
@@ -591,10 +601,18 @@
       navigator.mediaDevices.getUserMedia(constraints).then(function (stream) {
         micStream = stream;
         recognition.start();
-      }).catch(function () {
+      }).catch(function (err) {
         voiceBtn.classList.remove("listening");
-        voiceBtn.title = "Voice input";
-        recognition.start();
+        voiceBtn.title = getUIString(getLang().code, "voiceInput");
+        var msg = "Microphone access denied or unavailable. ";
+        if (err && err.name === "NotAllowedError") {
+          msg += "Please allow the microphone when your browser prompts, or check your browser/site settings (e.g. allow for this site).";
+        } else if (err && err.name === "NotFoundError") {
+          msg += "No microphone found. Connect a microphone and try again.";
+        } else {
+          msg += "Use a modern browser (Chrome or Edge) and ensure the page is loaded over HTTPS.";
+        }
+        if (typeof alert !== "undefined") alert(msg);
       });
     });
 
@@ -627,11 +645,14 @@
         }
       }
     };
-    recognition.onerror = function () {
+    recognition.onerror = function (e) {
       if (stopRequested) return;
       releaseMicStream();
       voiceBtn.classList.remove("listening");
       voiceBtn.title = getUIString(getLang().code, "voiceInput");
+      if (e && e.error === "not-allowed" && typeof alert !== "undefined") {
+        alert("Microphone access was denied. Please allow the microphone for this site in your browser settings and click the mic again.");
+      }
     };
   }
 

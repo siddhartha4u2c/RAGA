@@ -61,8 +61,8 @@ git push -u origin main
    - **Root Directory**: leave blank (if the repo root is the `chatbot` folder with `app.py`, you’re good; if your repo root is the parent folder, set **Root Directory** to `chatbot`).
    - **Runtime**: `Python 3`
    - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn app:app`  
-     (Or leave Start Command blank; Render will use the `Procfile` in the repo.)
+   - **Start Command**: Leave **blank** so Render uses the repo’s **Procfile** (`gunicorn app:app -c gunicorn.conf.py`).  
+     If you set a custom Start Command, it must be: `gunicorn app:app -c gunicorn.conf.py` so the app binds to Render’s `PORT` (otherwise you may get “No open HTTP ports” or 502).
 
 ### 3. Add environment variables
 

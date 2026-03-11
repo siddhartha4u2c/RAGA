@@ -544,16 +544,26 @@
     }, 400);
   }
 
+  function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (navigator.maxTouchPoints && navigator.maxTouchPoints > 0 && window.innerWidth < 768);
+    }
+
   function initVoice() {
     const SpeechRecognition =
       window.SpeechRecognition || window.webkitSpeechRecognition;
+    var mobile = isMobileDevice();
     if (!SpeechRecognition) {
-      voiceBtn.title = "Voice not supported in this browser";
+      voiceBtn.title = mobile
+        ? "Voice not supported on this device. Use a laptop with Chrome/Edge, or type your message."
+        : "Voice not supported in this browser. Use Chrome or Edge.";
       voiceBtn.disabled = true;
+      if (mobile) voiceBtn.setAttribute("aria-label", "Voice not supported on mobile. Type your message below.");
       return;
     }
     if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== "function") {
-      voiceBtn.title = "Microphone not supported. Use HTTPS and a modern browser (Chrome, Edge).";
+      voiceBtn.title = mobile
+        ? "Microphone not available on this device. Please type your message."
+        : "Microphone not supported. Use HTTPS and a modern browser (Chrome, Edge).";
       voiceBtn.disabled = true;
       return;
     }
@@ -563,7 +573,7 @@
       return;
     }
     recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = mobile ? false : true;
     recognition.interimResults = false;
     recognition.lang = getLang().code === "en" ? "en-IN" : getLang().code + "-IN";
 
@@ -600,7 +610,11 @@
       };
       navigator.mediaDevices.getUserMedia(constraints).then(function (stream) {
         micStream = stream;
-        recognition.start();
+        if (mobile) {
+          setTimeout(function () { try { recognition.start(); } catch (e) {} }, 150);
+        } else {
+          recognition.start();
+        }
       }).catch(function (err) {
         voiceBtn.classList.remove("listening");
         voiceBtn.title = getUIString(getLang().code, "voiceInput");
@@ -611,6 +625,9 @@
           msg += "No microphone found. Connect a microphone and try again.";
         } else {
           msg += "Use a modern browser (Chrome or Edge) and ensure the page is loaded over HTTPS.";
+        }
+        if (isMobileDevice()) {
+          msg += " On Android: check Chrome → Site settings → Microphone and allow for this site. If it still fails, please type your message below.";
         }
         if (typeof alert !== "undefined") alert(msg);
       });
@@ -623,7 +640,8 @@
     recognition.onresult = function (e) {
       var last = e.results.length - 1;
       var transcript = (e.results[last][0].transcript || "").trim();
-      if (!e.results[last].isFinal || transcript.length < 10) return;
+      var minLen = mobile ? 3 : 10;
+      if (!e.results[last].isFinal || transcript.length < minLen) return;
       if (assistantPhrasePattern.test(transcript)) return;
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(function () {
@@ -641,7 +659,11 @@
         stopRequested = false;
       } else {
         if (voiceBtn.classList.contains("listening")) {
-          try { recognition.start(); } catch (err) {}
+          if (mobile) {
+            setTimeout(function () { try { recognition.start(); } catch (err) {} }, 200);
+          } else {
+            try { recognition.start(); } catch (err) {}
+          }
         }
       }
     };
@@ -650,8 +672,13 @@
       releaseMicStream();
       voiceBtn.classList.remove("listening");
       voiceBtn.title = getUIString(getLang().code, "voiceInput");
-      if (e && e.error === "not-allowed" && typeof alert !== "undefined") {
-        alert("Microphone access was denied. Please allow the microphone for this site in your browser settings and click the mic again.");
+      if (e && typeof alert !== "undefined") {
+        if (e.error === "not-allowed") {
+          alert("Microphone access was denied. Allow the microphone for this site (Chrome: ⋮ → Site settings → Microphone) and try again.");
+        } else if (isMobileDevice()) {
+          var androidHint = /Android/i.test(navigator.userAgent) ? " On Android Chrome: allow mic in site settings (⋮ → Site settings → Microphone). " : "";
+          alert("Voice input didn't work." + androidHint + "You can type your message in the box below.");
+        }
       }
     };
   }
@@ -752,4 +779,11 @@
 
   ensureSession().then(() => {});
   initVoice();
+  if (isMobileDevice()) {
+    var mobileHint = document.getElementById("mobileVoiceHint");
+    if (mobileHint && voiceBtn.disabled) {
+      mobileHint.textContent = "Voice input is not available on this device. Please type your message above.";
+      mobileHint.style.display = "block";
+    }
+  }
 })();

@@ -528,6 +528,12 @@ body {
 .mic-instruction strong { color: var(--text); }
 .mic-instruction em { font-style: italic; color: var(--accent-2); }
 
+.mobile-voice-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+}
+
 .input-hint {
   font-size: 0.75rem;
   color: var(--text-muted);

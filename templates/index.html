@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AskSiddhartha – Multilingual Indian Language Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <div class="bg-pattern"></div>
+  <div class="app">
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">🌏</span>
+        <h1>AskSiddhartha</h1>
+        <p class="tagline" data-i18n="tagline">Speak or type in your language</p>
+      </div>
+      <div class="header-actions">
+        <div class="lang-select-wrap">
+          <label for="lang" data-i18n="language">Language</label>
+          <select id="lang" aria-label="Select language">
+            <option value="en" data-name="English">English</option>
+            <option value="hi" data-name="Hindi">हिंदी (Hindi)</option>
+            <option value="as" data-name="Assamese">অসমীয়া (Assamese)</option>
+            <option value="bn" data-name="Bengali">বাংলা (Bengali)</option>
+            <option value="te" data-name="Telugu">తెలుగు (Telugu)</option>
+            <option value="mr" data-name="Marathi">मराठी (Marathi)</option>
+            <option value="ta" data-name="Tamil">தமிழ் (Tamil)</option>
+            <option value="gu" data-name="Gujarati">ગુજરાતી (Gujarati)</option>
+            <option value="kn" data-name="Kannada">ಕನ್ನಡ (Kannada)</option>
+            <option value="ml" data-name="Malayalam">മലയാളം (Malayalam)</option>
+            <option value="pa" data-name="Punjabi">ਪੰਜਾਬੀ (Punjabi)</option>
+          </select>
+        </div>
+        <button type="button" class="btn btn-ghost" id="clearBtn" data-i18n="newChat" data-i18n-title="newChatTitle">New chat</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="chat-container">
+        <div id="messages" class="messages" role="log" aria-live="polite"></div>
+        <div class="upload-area">
+          <input type="file" id="fileInput" accept=".pdf,.doc,.docx,image/png,image/jpeg,image/jpg,image/gif,image/webp" multiple hidden />
+          <button type="button" class="btn btn-upload" id="uploadBtn" data-i18n="attachBtn">📎 Attach screenshot or document (PDF, Word)</button>
+          <span class="paste-hint" data-i18n="pasteHint">or paste image (Ctrl+V)</span>
+          <div id="uploadedList" class="uploaded-list"></div>
+        </div>
+        <div class="input-area">
+          <div class="input-row">
+            <input
+              type="text"
+              id="textInput"
+              data-i18n-placeholder="placeholder"
+              placeholder="Type your message..."
+              autocomplete="off"
+              enterkeyhint="send"
+              aria-label="Message"
+            />
+            <button type="button" class="btn btn-icon btn-voice" id="voiceBtn" data-i18n-title="voiceInput" title="Voice input">
+              <span class="mic-icon" aria-hidden="true">🎤</span>
+            </button>
+            <button type="button" class="btn btn-stop-playback" id="stopPlaybackBtn" data-i18n="stopPlayback" data-i18n-title="stopPlaybackTitle" style="display: none;">⏹ Stop</button>
+            <button type="button" class="btn btn-primary" id="sendBtn" data-i18n="send">Send</button>
+          </div>
+          <p class="transliterate-preview" id="transliteratePreview" style="display:none;"></p>
+          <p class="mic-instruction" data-i18n="micInstruction">Mic: Click once to turn on (red = listening); it stays on. After you stop speaking for ~2 sec, your question is sent. Click again to turn off. Noise suppression on.</p>
+        </div>
+      </div>
+    </main>
+
+  </div>
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

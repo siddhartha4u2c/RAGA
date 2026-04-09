@@ -988,6 +988,50 @@ def fetch_web_search(query: str, api_key: str, recency_filter: str | None = None
         return None
 
 
+def fetch_google_news_serp(query: str, api_key: str) -> str | None:
+    """Fetch Google News via SerpAPI — often fresher than organic + knowledge graph for politics."""
+    if not query or not api_key or len(query.strip()) < 2:
+        return None
+    q = quote(query.strip()[:280])
+    url = (
+        "https://serpapi.com/search.json?engine=google_news&q="
+        + q
+        + "&api_key="
+        + quote(api_key)
+        + "&num=10&gl=in&hl=en"
+    )
+    try:
+        req = Request(url, headers={"User-Agent": "AskSiddhartha/1.0"})
+        with urlopen(req, timeout=SERP_TIMEOUT) as resp:
+            data = json.loads(resp.read().decode())
+    except (URLError, HTTPError, OSError, json.JSONDecodeError):
+        return None
+    items = data.get("news_results") or []
+    if not items:
+        return None
+    parts: list[str] = []
+    for i, r in enumerate(items[:10], 1):
+        title = (r.get("title") or "").strip()
+        link = (r.get("link") or "").strip()
+        snippet = (r.get("snippet") or "").strip()
+        date_str = (r.get("date") or r.get("iso_date") or "").strip()
+        src = r.get("source")
+        if isinstance(src, dict):
+            src = (src.get("name") or "").strip()
+        elif isinstance(src, str):
+            src = src.strip()
+        else:
+            src = ""
+        if title or snippet:
+            line = f"{i}. {title}\n   {snippet}\n   URL: {link}"
+            if src:
+                line += f"\n   Source: {src}"
+            if date_str:
+                line += f"\n   Date: {date_str}"
+            parts.append(line)
+    return "\n\n".join(parts) if parts else None
+
+
 def _extract_life_status_name(message: str) -> str | None:
     """Extract person name from life-status questions like 'is X dead/alive'."""
     text = (message or "").strip()
@@ -1085,15 +1129,60 @@ def _wants_serp_web_search(query: str) -> bool:
         return False
     if URL_PATTERN.search(query or ""):
         return True
+    # Lookup questions (who is the CM, etc.) need fresh SERP snippets—model weights alone go stale.
+    if _wants_fact_check_context(query):
+        return True
     ql = (query or "").lower()
     triggers = (
         "news", "headline", "breaking", "latest", "today ", "yesterday", "right now",
         "stock", "share price", "crypto", "weather", "who won", "score ", "match ",
         "election", "ipl ", "world cup", "release date", "launched today",
+        "minister", "chief minister", "deputy chief", "governor", "cabinet", "mla ", "mp ",
+        "appointed", "sworn in", "current ", "incumbent",
     )
     if any(t in ql for t in triggers):
         return True
     return _is_binary_question(query)
+
+
+def _recency_filter_for_web_query(query: str) -> str | None:
+    """Bias Google results toward recent news when the question is about roles that change over time."""
+    ql = (query or "").lower()
+    if any(
+        k in ql
+        for k in (
+            "minister", "chief minister", "deputy", "governor", "cabinet",
+            "president of", "prime minister", "mla", "mp ", "mayor",
+            "commissioner", "appointed", "sworn", "election", "government",
+            "who is the", "who are the", "who was the",
+        )
+    ):
+        return "m"
+    return None
+
+
+def _wants_current_affairs_boost(query: str) -> bool:
+    """True if query is about current government / office holders (answers change over time)."""
+    ql = (query or "").lower()
+    return any(
+        k in ql
+        for k in (
+            "minister", "chief minister", "deputy chief", "deputy cm", "deputy ",
+            "governor", "cabinet", "mla", "mp ", "mayor", "rajya sabha", "lok sabha",
+            "election", "government", "assembly", "portfolio",
+        )
+    )
+
+
+def _boost_serp_query_for_current_affairs(query: str) -> str:
+    """Add keywords so Google returns fresher news-style pages, not stale KB snippets."""
+    q = (query or "").strip()
+    if not q:
+        return q
+    if not _wants_current_affairs_boost(q):
+        return q
+    # Short tail; avoids blowing past SerpAPI query limits
+    return (q + " current appointment").strip()[:300]
 
 
 def fetch_fact_check_context(query: str, api_key: str) -> str | None:
@@ -1196,14 +1285,15 @@ def _translate_query_to_english(client, query: str, lang_name: str) -> str:
     q = (query or "").strip()
     if not q:
         return q
-    if (lang_name or "").strip().lower() == "english":
+    lang = (lang_name or "").strip().lower()
+    # Plain ASCII + English UI: use as-is for Serp.
+    if lang == "english" and not _contains_non_english_text(q):
         return q
-    # For Indic/vernacular text, translate before retrieval to improve match quality.
-    if not _contains_non_english_text(q):
-        return q
+    # Non-English UI (e.g. Marathi): Romanized queries must still become English for Google.
+    # English UI + Indic script: same.
     prompt = (
-        "Translate the following user query to natural English for search and fact-check retrieval. "
-        "Return ONLY the translated query text with no explanation.\n\n"
+        "Translate the following user query to natural English for Google search and fact retrieval. "
+        "Preserve names of people and places. Return ONLY the translated query text with no explanation.\n\n"
         f"Query: {q}"
     )
     for mdl in _chat_model_candidates():
@@ -1348,6 +1438,7 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
         f"You are a helpful, friendly assistant. You must write every response only in {reply_lang}. "
         "Primary rule: answer the user's actual question (especially the latest message). "
         "Link text, web search snippets, news blocks, and fact-check excerpts are supporting material only—use what is relevant and ignore what is off-topic or contradictory. "
+        "For current government posts (chief minister, deputy CM, ministers, governors, etc.), if web search results or fact-check snippets give a name or date that differs from older training data, trust the retrieved snippets and cite the role clearly. "
         "If supporting material is empty, weak, or irrelevant, answer from general knowledge like a normal chat assistant. "
         "The user may type in any language (e.g. Hindi, Tamil, English); you must still reply only in the selected language. "
         "Uploaded documents or images may be in any language; give your answer in the user's selected language only. "
@@ -1430,14 +1521,15 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
                         f"Status from web sources: {status.upper()}\n"
                         "Instruction: For yes/no life-status questions, use this status consistently in any language."
                     )
-            # Fact-check only for clear lookup/binary questions (not every sentence ending in ?)
-            if _wants_fact_check_context(retrieval_query):
+            # Fact-check (includes knowledge graph) — skip for current government roles; KG is often stale vs news.
+            if _wants_fact_check_context(retrieval_query) and not _wants_current_affairs_boost(retrieval_query):
                 fact_bits = fetch_fact_check_context(retrieval_query, serp_key)
                 if fact_bits:
                     fact_check_context = (
                         "[Fact-check context]\n"
                         + fact_bits
-                        + "\nInstruction: Keep factual verdict the same across languages; do not contradict this evidence."
+                        + "\nInstruction: Keep factual verdict the same across languages. "
+                        "If '[Web search results' appears above and contradicts this block for current government roles, trust the web results."
                     )
         if serp_key and last_query:
             # For "latest post/tweet" on Twitter/Instagram/etc., search with recency bias and strict instructions
@@ -1448,7 +1540,34 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
                 if not web_search_context:
                     web_search_context = fetch_web_search(search_query, serp_key)
             elif _wants_serp_web_search(last_query):
-                web_search_context = fetch_web_search(retrieval_query, serp_key)
+                rec = _recency_filter_for_web_query(retrieval_query)
+                serp_q = _boost_serp_query_for_current_affairs(retrieval_query)
+                web_search_context = fetch_web_search(serp_q, serp_key, recency_filter=rec)
+                if not web_search_context and serp_q != retrieval_query:
+                    web_search_context = fetch_web_search(retrieval_query, serp_key, recency_filter=rec)
+                if not web_search_context and rec:
+                    web_search_context = fetch_web_search(retrieval_query, serp_key)
+                # Google News is usually fresher than organic snippets for appointments / resignations.
+                if _wants_current_affairs_boost(retrieval_query):
+                    gn = fetch_google_news_serp(serp_q, serp_key)
+                    if not gn and serp_q != retrieval_query:
+                        gn = fetch_google_news_serp(retrieval_query, serp_key)
+                    if gn:
+                        news_block = (
+                            "[Google News — recent articles (prefer these for WHO CURRENTLY HOLDS a political office)]\n\n"
+                            + gn
+                        )
+                        if web_search_context:
+                            web_search_context = news_block + "\n\n---\n\n" + web_search_context
+                        else:
+                            web_search_context = news_block
+                if web_search_context and _wants_current_affairs_boost(retrieval_query):
+                    web_search_context = (
+                        "[CRITICAL: Answer using ONLY the Google News and web results below for names and roles. "
+                        "Do not use training-data memory for current ministers, deputy CM, CM, or governors. "
+                        "Quote the person’s name from the snippets.]\n\n"
+                        + web_search_context
+                    )
             if web_search_context and refined:
                 web_search_context = (
                     "[IMPORTANT: The user asked for the LATEST or LAST post/tweet from this account. "
@@ -1466,14 +1585,15 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
             content = "[Instruction: You must respond in English only. Do not use Hindi or any other language.]\n\n" + content
         if (fact_check_context or life_status_context or multi_news_context or web_search_context or link_context) and is_last_user:
             prepend = ""
+            # Web organic results are often fresher than knowledge-graph fact-check; show web first for up-to-date roles.
+            if web_search_context:
+                prepend += "[Web search results for your query:]\n\n" + web_search_context + "\n\n"
             if fact_check_context:
                 prepend += fact_check_context + "\n\n"
             if life_status_context:
                 prepend += life_status_context + "\n\n"
             if multi_news_context:
                 prepend += "[Multi-source news context:]\n\n" + multi_news_context + "\n\n"
-            if web_search_context:
-                prepend += "[Web search results for your query:]\n\n" + web_search_context + "\n\n"
             if link_context:
                 intro = (
                     "[The user shared a link; we could not load the page. See note below.]\n\n"

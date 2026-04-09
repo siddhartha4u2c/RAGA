@@ -6,11 +6,13 @@ import base64
 import json
 import os
 import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import quote, urlparse
 from urllib.error import URLError, HTTPError
+from typing import List, Dict
 
 # Load .env from project root (for local runs)
 if Path(__file__).resolve().parent.joinpath(".env").exists():
@@ -80,7 +82,8 @@ def add_message(session_id: str, role: str, content: str):
         SESSION_MEMORY[session_id] = []
     SESSION_MEMORY[session_id].append({"role": role, "content": content})
     # Keep last N messages so the model has full context for coherent, context-aware replies
-    max_messages = 60
+    # Keep deeper in-session memory so related follow-up questions remain coherent.
+    max_messages = int(os.environ.get("SESSION_MAX_MESSAGES", "140"))
     if len(SESSION_MEMORY[session_id]) > max_messages:
         SESSION_MEMORY[session_id] = SESSION_MEMORY[session_id][-max_messages:]
 
@@ -309,6 +312,79 @@ def _domain_from_url(url: str) -> str:
         return ""
 
 
+def _user_message_without_urls(message: str, urls: list[str]) -> str:
+    """Strip pasted URLs from the user message so we keep the question/topic text."""
+    t = (message or "").strip()
+    for u in urls:
+        t = t.replace(u, " ")
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _any_url_is_youtube(urls: list[str]) -> bool:
+    return any("youtube.com" in u.lower() or "youtu.be" in u.lower() for u in urls)
+
+
+def augment_link_context_with_web_youtube_fallbacks(
+    link_context: str,
+    user_message: str,
+    urls: list[str],
+    lang_name: str,
+    *,
+    fetch_succeeded: bool,
+    appended_site_search: bool,
+) -> str:
+    """
+    When the user shares link(s) plus a question, add Google (SerpAPI) and/or YouTube results
+    if the fetched page may not contain the answer.
+    """
+    q = _user_message_without_urls(user_message, urls)[:280]
+    if len(q) < 8:
+        return link_context
+    serp_key = os.environ.get("SERPAPI_API_KEY") or os.environ.get("GOOGLE_SERP_API_KEY")
+    fragments: list[str] = []
+    if serp_key:
+        # Broad search for the user's question (use when page text is thin or off-topic).
+        if fetch_succeeded or not appended_site_search:
+            broad = fetch_web_search(q, serp_key)
+            if broad:
+                fragments.append(
+                    "[Additional Google search for your question "
+                    "(use if the shared page/link text does not answer it):]\n\n"
+                    + broad
+                )
+        doms = sorted({_domain_from_url(u) for u in urls if _domain_from_url(u)})
+        if len(doms) == 1 and fetch_succeeded:
+            site_res = fetch_web_search(f"{q} site:{doms[0]}"[:280], serp_key)
+            if site_res:
+                fragments.append(
+                    f"[Web search scoped to shared site ({doms[0]}):]\n\n" + site_res
+                )
+    if os.environ.get("YOUTUBE_API_KEY"):
+        if _wants_youtube_news(user_message) or _any_url_is_youtube(urls):
+            yt_lang = _youtube_relevance_language(lang_name)
+            ytq = q
+            for u in urls:
+                if "youtube.com" in u.lower() or "youtu.be" in u.lower():
+                    ytq = (f"{ytq} {u}").strip()[:220]
+                    break
+            vids = search_youtube(ytq, max_results=4, language=yt_lang)
+            if vids:
+                lines = [
+                    "[YouTube search results "
+                    "(use if the link/page is not about video or does not answer the question):]"
+                ]
+                for y in vids:
+                    vid = y.get("videoId", "")
+                    lines.append(
+                        f"- {y.get('title', '')} — {y.get('channel', '')} — "
+                        f"https://www.youtube.com/watch?v={vid}"
+                    )
+                fragments.append("\n".join(lines))
+    if not fragments:
+        return link_context
+    return link_context + "\n\n" + "\n\n".join(fragments)
+
+
 def _linkedin_profile_id(url: str) -> str | None:
     """Extract LinkedIn profile username from URL (e.g. linkedin.com/in/sagarkamble01 -> sagarkamble01)."""
     if not url or "linkedin.com" not in url.lower() or "/in/" not in url.lower():
@@ -510,6 +586,319 @@ def fetch_social_profile_via_search(
 SERP_MAX_RESULTS = 8
 SERP_TIMEOUT = 10
 
+# Optional multi-source news/search keys
+NEWSAPI_KEY = os.environ.get("NEWSAPI_KEY")
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY")
+GOOGLE_SERP_KEY = os.environ.get("GOOGLE_SERP_KEY")  # optional alias
+
+# State-wise RSS sources (best-effort; some links may be blocked or non-standard)
+STATE_FEEDS: dict[str, list[str]] = {
+    "Assam": [
+        "https://assamtribune.com/feed",
+        "https://assamtimes.org/rss.xml",
+        "https://nenow.in/feed",
+    ],
+    "West Bengal": [
+        "https://www.anandabazar.com/rss.xml",
+        "https://thetimesofbengal.com/feed",
+        "https://rss.feedspot.com/bartaman_news_rss",
+    ],
+    "Punjab": [
+        "https://www.tribuneindia.com/rss-feeds",
+        "https://rss.feedspot.com/news18_punjab_rss",
+    ],
+    "Maharashtra": [
+        "https://www.lokmat.com/rss",
+        "https://www.mid-day.com/Resources/mid-day.com/rss/mumbai_news.xml",
+    ],
+    "Tamil Nadu": [
+        "https://www.dinamalar.com/rss_feed.xml",
+        "https://www.dinamani.com/rss",
+    ],
+    "Kerala": [
+        "https://www.mathrubhumi.com/rss",
+        "https://www.manoramaonline.com/rss",
+    ],
+    "Karnataka": [
+        "https://www.prajavani.net/rss",
+        "https://vijaykarnataka.com/rss",
+    ],
+    "Telangana": [
+        "https://www.thehansindia.com/rss/rssview",
+        "https://rss.feedspot.com/telangana_today_rss",
+    ],
+    "Delhi": [
+        "https://rss.feedspot.com/delhi_post_news_rss",
+        "https://rss.feedspot.com/chandigarh_metro_rss",
+    ],
+    "Odisha": [
+        "https://odishabarta.com/feed",
+        "https://rss.feedspot.com/news18_odisha_rss",
+    ],
+    "National": [
+        "https://ndtv.com/feeds/news.xml",
+        "https://indianexpress.com/feed",
+        "https://timesofindia.indiatimes.com/rssfeeds/1221656.cms",
+    ],
+}
+ALL_STATES = list(STATE_FEEDS.keys())
+
+
+def _is_news_query(query: str) -> bool:
+    q = (query or "").lower()
+    if not q:
+        return False
+    keys = (
+        "news", "headlines", "latest", "breaking", "update", "updates",
+        "today", "state news", "current affairs", "what happened",
+    )
+    if not any(k in q for k in keys):
+        return False
+    # Avoid treating social "latest post/tweet" requests as news fetch requests.
+    social_markers = ("latest post", "latest tweet", "recent tweet", "last tweet", "on twitter", "instagram", "linkedin", "facebook")
+    return not any(m in q for m in social_markers)
+
+
+def _contains_non_english_text(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    if _reply_contains_indic(t):
+        return True
+    return any(ord(ch) > 127 for ch in t)
+
+
+def _youtube_relevance_language(lang_name: str | None) -> str | None:
+    code = (lang_name or "").strip().lower()
+    mapping = {
+        "english": "en",
+        "hindi": "hi",
+        "bengali": "bn",
+        "assamese": "as",
+        "telugu": "te",
+        "marathi": "mr",
+        "tamil": "ta",
+        "gujarati": "gu",
+        "kannada": "kn",
+        "malayalam": "ml",
+        "punjabi": "pa",
+    }
+    return mapping.get(code) or "en"
+
+
+def _wants_youtube_news(query: str) -> bool:
+    q = (query or "").lower()
+    return any(k in q for k in ("youtube", "video", "watch", "clip", "channel", "latest upload", "latest video", "new video"))
+
+
+def _extract_states_from_query(query: str) -> list[str]:
+    q = (query or "").lower()
+    if not q:
+        return ["National"]
+    matches = [s for s in ALL_STATES if s.lower() in q]
+    if matches:
+        return matches[:4]  # cap for latency
+    if "all states" in q or "across india" in q or "pan india" in q:
+        return ALL_STATES
+    return ["National"]
+
+
+def _safe_json_url(url: str, timeout: int = 10) -> dict | None:
+    try:
+        req = Request(url, headers={"User-Agent": "AskSiddhartha/1.0"})
+        with urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", errors="ignore"))
+    except (URLError, HTTPError, OSError, json.JSONDecodeError):
+        return None
+
+
+def fetch_newsapi_news(query: str, state: str, max_results: int = 4) -> List[Dict]:
+    if not NEWSAPI_KEY:
+        return []
+    lower_q = (query or "").lower()
+    generic_news = any(k in lower_q for k in ("latest news", "top news", "headlines", "breaking", "today news", "today's news"))
+    # For generic queries, top-headlines is more accurate than "everything".
+    if generic_news and state == "National":
+        url = (
+            "https://newsapi.org/v2/top-headlines"
+            f"?country=in&pageSize={max_results}&apiKey={quote(NEWSAPI_KEY)}"
+        )
+    else:
+        q = quote(f"{query} {state}"[:220])
+        url = (
+            "https://newsapi.org/v2/everything"
+            f"?q={q}&pageSize={max_results}&sortBy=publishedAt&language=en&apiKey={quote(NEWSAPI_KEY)}"
+        )
+    data = _safe_json_url(url, timeout=10) or {}
+    articles = data.get("articles") or []
+    out: list[dict] = []
+    for a in articles[:max_results]:
+        published = (a.get("publishedAt") or "").strip()
+        out.append({
+            "title": (a.get("title") or "").strip(),
+            "url": (a.get("url") or "").strip(),
+            "source": ((a.get("source") or {}).get("name") or "NewsAPI").strip(),
+            "language": "English",
+            "state": state,
+            "published_at": published,
+        })
+    return out
+
+
+def _parse_feed_items(xml_text: str, max_items: int = 20) -> list[dict]:
+    items: list[dict] = []
+    try:
+        root = ET.fromstring(xml_text)
+    except Exception:
+        return items
+    # RSS
+    for item in root.findall(".//channel/item")[:max_items]:
+        title = (item.findtext("title") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        summary = (item.findtext("description") or "").strip()
+        if title:
+            items.append({"title": title, "link": link, "summary": summary})
+    if items:
+        return items
+    # Atom
+    atom_ns = {"a": "http://www.w3.org/2005/Atom"}
+    for entry in root.findall(".//a:entry", atom_ns)[:max_items]:
+        title = (entry.findtext("a:title", default="", namespaces=atom_ns) or "").strip()
+        link_el = entry.find("a:link", atom_ns)
+        link = (link_el.attrib.get("href") if link_el is not None else "") or ""
+        summary = (entry.findtext("a:summary", default="", namespaces=atom_ns) or "").strip()
+        if title:
+            items.append({"title": title, "link": link.strip(), "summary": summary})
+    return items
+
+
+def fetch_state_rss_news(query: str, state: str, max_results_per_feed: int = 2) -> List[Dict]:
+    results: list[dict] = []
+    q = (query or "").lower()
+    non_english_query = _contains_non_english_text(query)
+    feeds = STATE_FEEDS.get(state, [])
+    for feed_url in feeds:
+        try:
+            req = Request(feed_url, headers={"User-Agent": "AskSiddhartha/1.0"})
+            with urlopen(req, timeout=8) as resp:
+                xml_text = resp.read().decode("utf-8", errors="ignore")
+        except (URLError, HTTPError, OSError):
+            continue
+        feed_items = _parse_feed_items(xml_text, max_items=24)
+        matched = 0
+        for entry in feed_items:
+            hay = ((entry.get("title") or "") + " " + (entry.get("summary") or "")).lower()
+            # For non-English user queries, strict text match against English RSS titles fails often.
+            # In that case, include latest feed entries instead of over-filtering.
+            if non_english_query or (not q) or (q in hay) or any(tok in hay for tok in q.split() if len(tok) >= 4):
+                results.append({
+                    "title": (entry.get("title") or "").strip(),
+                    "url": (entry.get("link") or "").strip(),
+                    "source": _domain_from_url(feed_url),
+                    "language": "local",
+                    "state": state,
+                })
+                matched += 1
+            if matched >= max_results_per_feed:
+                break
+    return results
+
+
+def search_youtube(query: str, max_results: int = 2, language: str | None = None) -> List[Dict]:
+    if not YOUTUBE_API_KEY:
+        return []
+    q = quote((query or "").strip()[:220])
+    lower_q = (query or "").lower()
+    order = "date" if any(k in lower_q for k in ("latest", "newest", "last", "recent", "today")) else "relevance"
+    url = (
+        "https://www.googleapis.com/youtube/v3/search"
+        f"?part=snippet&q={q}&maxResults={max_results}&type=video&order={order}&key={quote(YOUTUBE_API_KEY)}"
+    )
+    if language:
+        url += "&relevanceLanguage=" + quote(language)
+    data = _safe_json_url(url, timeout=10) or {}
+    videos = data.get("items") or []
+    out: list[dict] = []
+    for v in videos[:max_results]:
+        sn = v.get("snippet") or {}
+        vid = (v.get("id") or {}).get("videoId") or ""
+        if not vid:
+            continue
+        out.append({
+            "title": (sn.get("title") or "").strip(),
+            "videoId": vid.strip(),
+            "channel": (sn.get("channelTitle") or "").strip(),
+            "language": language or "unknown",
+        })
+    return out
+
+
+def search_google_structured(query: str, num_results: int = 4) -> List[Dict]:
+    serp_key = os.environ.get("SERPAPI_API_KEY") or os.environ.get("GOOGLE_SERP_API_KEY") or GOOGLE_SERP_KEY
+    if not serp_key:
+        return []
+    q = quote((query or "").strip()[:260])
+    url = f"https://serpapi.com/search.json?q={q}&engine=google&num={num_results}&api_key={quote(serp_key)}"
+    data = _safe_json_url(url, timeout=10) or {}
+    out: list[dict] = []
+    for r in (data.get("organic_results") or [])[:num_results]:
+        out.append({
+            "title": (r.get("title") or "").strip(),
+            "link": (r.get("link") or "").strip(),
+            "snippet": (r.get("snippet") or "").strip(),
+        })
+    return out
+
+
+def fetch_multi_source_news_context(query_text: str, lang_name: str | None = None) -> str | None:
+    """Aggregate relevant news snippets from NewsAPI, state RSS, YouTube, and SERP."""
+    youtube_mode = _wants_youtube_news(query_text)
+    if not _is_news_query(query_text) and not youtube_mode:
+        return None
+    states = _extract_states_from_query(query_text)
+    combined: list[str] = []
+    seen_titles: set[str] = set()
+    # For YouTube/channel queries, prioritize direct YouTube search only to avoid noisy news-state mixing.
+    if youtube_mode:
+        yt_lang = _youtube_relevance_language(lang_name)
+        yt_results = search_youtube(query_text, max_results=5, language=yt_lang)
+        for y in yt_results:
+            combined.append(
+                f"[YouTube] {y.get('title','')} (Channel: {y.get('channel','')}, "
+                f"URL: https://www.youtube.com/watch?v={y.get('videoId','')})"
+            )
+        return "\n".join(combined[:8]) if combined else None
+
+    for state in states:
+        newsapi_news = fetch_newsapi_news(query_text, state, max_results=3)
+        state_rss_news = fetch_state_rss_news(query_text, state, max_results_per_feed=2)
+        for n in newsapi_news + state_rss_news:
+            if n.get("title"):
+                tkey = n.get("title", "").strip().lower()
+                if tkey in seen_titles:
+                    continue
+                seen_titles.add(tkey)
+                published = (n.get("published_at") or "").strip()
+                date_part = f", Date: {published}" if published else ""
+                combined.append(
+                    f"[{n.get('language','local')}, {n.get('state', state)}] "
+                    f"{n.get('title')} (Source: {n.get('source','unknown')}{date_part}, URL: {n.get('url','')})"
+                )
+        # Use YouTube only when user explicitly asks for video/youtube to avoid noisy context.
+        if _wants_youtube_news(query_text):
+            yt_lang = _youtube_relevance_language(lang_name)
+            for y in search_youtube(f"{query_text} {state}", max_results=1, language=yt_lang):
+                combined.append(
+                    f"[YouTube, {state}] {y.get('title','')} (Channel: {y.get('channel','')}, "
+                    f"URL: https://www.youtube.com/watch?v={y.get('videoId','')})"
+                )
+    for r in search_google_structured(query_text, num_results=4):
+        if r.get("title") or r.get("snippet"):
+            combined.append(f"[Web] {r.get('title','')} - {r.get('snippet','')} (URL: {r.get('link','')})")
+    if not combined:
+        return None
+    return "\n".join(combined[:30])
+
 # Phrases that indicate user wants the last/most recent post by that account (may be from long ago)
 LATEST_POST_PHRASES = (
     "latest post", "latest tweet", "recent tweet", "recent post", "last post", "last tweet",
@@ -599,6 +988,152 @@ def fetch_web_search(query: str, api_key: str, recency_filter: str | None = None
         return None
 
 
+def _extract_life_status_name(message: str) -> str | None:
+    """Extract person name from life-status questions like 'is X dead/alive'."""
+    text = (message or "").strip()
+    if not text:
+        return None
+    patterns = (
+        r"^\s*is\s+(.+?)\s+dead\??\s*$",
+        r"^\s*is\s+(.+?)\s+alive\??\s*$",
+        r"^\s*has\s+(.+?)\s+died\??\s*$",
+        r"^\s*did\s+(.+?)\s+die\??\s*$",
+        r"^\s*is\s+(.+?)\s+no\s+more\??\s*$",
+    )
+    for p in patterns:
+        m = re.match(p, text, flags=re.IGNORECASE)
+        if m:
+            name = re.sub(r"\s+", " ", (m.group(1) or "")).strip(" .,!?\t\r\n")
+            if 2 <= len(name) <= 120:
+                return name
+    return None
+
+
+def fetch_person_life_status(name: str, api_key: str) -> str | None:
+    """Best-effort status check via SerpAPI. Returns 'dead', 'alive', or None."""
+    if not name or not api_key:
+        return None
+    q = quote(f"{name} dead or alive")
+    url = f"https://serpapi.com/search.json?q={q}&engine=google&num=6&api_key={quote(api_key)}"
+    data = _safe_json_url(url, timeout=10) or {}
+    # 1) Prefer knowledge graph when present
+    kg = data.get("knowledge_graph") or {}
+    kg_text = " ".join(
+        str(x) for x in [kg.get("description"), kg.get("title"), kg.get("type"), kg.get("born"), kg.get("died")] if x
+    ).lower()
+    if "died" in kg and str(kg.get("died")).strip():
+        return "dead"
+    if any(k in kg_text for k in ("alive", "is an indian", "is a ", "born")) and "died" not in kg_text:
+        return "alive"
+    # 2) Fall back to snippets vote
+    dead_votes = 0
+    alive_votes = 0
+    for r in (data.get("organic_results") or [])[:6]:
+        s = ((r.get("title") or "") + " " + (r.get("snippet") or "")).lower()
+        if any(k in s for k in ("died", "passed away", "death", "late ")):
+            dead_votes += 1
+        if any(k in s for k in ("alive", "still alive", "is an indian", "is a singer", "born")) and "died" not in s:
+            alive_votes += 1
+    if dead_votes > alive_votes and dead_votes >= 1:
+        return "dead"
+    if alive_votes > dead_votes and alive_votes >= 1:
+        return "alive"
+    return None
+
+
+def _is_binary_question(text: str) -> bool:
+    q = (text or "").strip().lower()
+    if not q:
+        return False
+    starters = (
+        "is ", "are ", "was ", "were ", "do ", "does ", "did ", "has ", "have ", "had ",
+        "can ", "could ", "will ", "would ", "should ", "am ", "may ", "might ",
+    )
+    return q.startswith(starters)
+
+
+def _is_fact_question(text: str) -> bool:
+    q = (text or "").strip().lower()
+    if not q:
+        return False
+    markers = (
+        "who ", "what ", "when ", "where ", "which ", "whom ", "whose ",
+        "how many", "how much", "how old", "population", "capital", "founded",
+        "born", "died", "date of", "time in",
+    )
+    return any(m in q for m in markers) or q.endswith("?")
+
+
+def _wants_fact_check_context(query: str) -> bool:
+    """Only run heavy SerpAPI fact blocks when the question is clearly lookup-style (not every '?')."""
+    if not (query or "").strip():
+        return False
+    if _is_binary_question(query):
+        return True
+    ql = (query or "").lower()
+    markers = (
+        "who is ", "who was ", "who are ", "when did ", "when was ", "where is ", "where was ",
+        "how old is", "how old was", "how many people", "how much is", "population of",
+        "capital of", "net worth", " is dead", " is alive", " has died", " still alive",
+    )
+    return any(m in ql for m in markers)
+
+
+def _wants_serp_web_search(query: str) -> bool:
+    """Do not inject Google snippets into every message—hurts general Q&A vs parametric knowledge."""
+    if not (query or "").strip():
+        return False
+    if URL_PATTERN.search(query or ""):
+        return True
+    ql = (query or "").lower()
+    triggers = (
+        "news", "headline", "breaking", "latest", "today ", "yesterday", "right now",
+        "stock", "share price", "crypto", "weather", "who won", "score ", "match ",
+        "election", "ipl ", "world cup", "release date", "launched today",
+    )
+    if any(t in ql for t in triggers):
+        return True
+    return _is_binary_question(query)
+
+
+def fetch_fact_check_context(query: str, api_key: str) -> str | None:
+    """Fetch structured fact-check context for binary/factual questions."""
+    if not query or not api_key:
+        return None
+    q = quote(query.strip()[:280])
+    url = f"https://serpapi.com/search.json?q={q}&engine=google&num=6&api_key={quote(api_key)}"
+    data = _safe_json_url(url, timeout=10) or {}
+    parts: list[str] = []
+
+    answer_box = data.get("answer_box") or {}
+    if answer_box:
+        for k in ("answer", "snippet", "title", "result"):
+            val = (answer_box.get(k) or "")
+            if isinstance(val, str) and val.strip():
+                parts.append(f"AnswerBox {k}: {val.strip()}")
+
+    kg = data.get("knowledge_graph") or {}
+    if kg:
+        kg_bits = []
+        for k in ("title", "type", "description", "born", "died", "headquarters", "founded"):
+            val = kg.get(k)
+            if val:
+                kg_bits.append(f"{k}: {val}")
+        if kg_bits:
+            parts.append("KnowledgeGraph: " + " | ".join(kg_bits))
+
+    for i, r in enumerate((data.get("organic_results") or [])[:5], 1):
+        title = (r.get("title") or "").strip()
+        snippet = (r.get("snippet") or "").strip()
+        link = (r.get("link") or "").strip()
+        if title or snippet:
+            parts.append(f"{i}. {title}\n   {snippet}\n   URL: {link}")
+
+    if not parts:
+        return None
+    return "\n".join(parts)
+
+
 def get_openai_client():
     try:
         from openai import OpenAI
@@ -608,6 +1143,83 @@ def get_openai_client():
         return OpenAI(api_key=api_key)
     except ImportError:
         return None
+
+
+def _chat_model_candidates() -> list[str]:
+    """Return preferred chat models in retry order."""
+    primary = (os.environ.get("OPENAI_MODEL") or "").strip()
+    fallback = (os.environ.get("OPENAI_FALLBACK_MODEL") or "gpt-4o-mini").strip()
+    models: list[str] = []
+    if primary:
+        models.append(primary)
+    else:
+        models.append("gpt-5.3-chat-latest")
+    if fallback and fallback not in models:
+        models.append(fallback)
+    return models
+
+
+def _safe_completion_tokens(requested: int) -> int:
+    """Clamp completion tokens to a provider-safe range."""
+    try:
+        cap = int((os.environ.get("MAX_COMPLETION_TOKENS_CAP") or "1200").strip())
+    except Exception:
+        cap = 1200
+    cap = max(64, min(cap, 32768))
+    return max(64, min(int(requested), cap))
+
+
+def _chat_create_with_token_fallback(client, model: str, messages: list[dict], completion_tokens: int):
+    """Create chat completion with compatibility fallback for provider token params."""
+    t = _safe_completion_tokens(completion_tokens)
+    try:
+        # Newer OpenAI-style param
+        return client.chat.completions.create(
+            model=model,
+            messages=messages,
+            max_completion_tokens=t,
+        )
+    except Exception as e:
+        msg = str(e).lower()
+        # Some OpenAI-compatible providers still expect max_tokens
+        if ("max_completion_tokens" in msg) or ("unsupported parameter" in msg and "max_completion_tokens" in msg):
+            return client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=t,
+            )
+        raise
+
+
+def _translate_query_to_english(client, query: str, lang_name: str) -> str:
+    """Translate user query to English for search/fact retrieval; fallback to original."""
+    q = (query or "").strip()
+    if not q:
+        return q
+    if (lang_name or "").strip().lower() == "english":
+        return q
+    # For Indic/vernacular text, translate before retrieval to improve match quality.
+    if not _contains_non_english_text(q):
+        return q
+    prompt = (
+        "Translate the following user query to natural English for search and fact-check retrieval. "
+        "Return ONLY the translated query text with no explanation.\n\n"
+        f"Query: {q}"
+    )
+    for mdl in _chat_model_candidates():
+        try:
+            r = _chat_create_with_token_fallback(
+                client=client,
+                model=mdl,
+                messages=[{"role": "user", "content": prompt}],
+                completion_tokens=120,
+            )
+            out = (r.choices[0].message.content or "").strip()
+            if out:
+                return out[:300]
+        except Exception:
+            continue
+    return q
 
 
 def fetch_person_image(person_name: str) -> str | None:
@@ -734,10 +1346,16 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
     reply_lang = (lang_name or "English").strip()
     system = (
         f"You are a helpful, friendly assistant. You must write every response only in {reply_lang}. "
+        "Primary rule: answer the user's actual question (especially the latest message). "
+        "Link text, web search snippets, news blocks, and fact-check excerpts are supporting material only—use what is relevant and ignore what is off-topic or contradictory. "
+        "If supporting material is empty, weak, or irrelevant, answer from general knowledge like a normal chat assistant. "
         "The user may type in any language (e.g. Hindi, Tamil, English); you must still reply only in the selected language. "
         "Uploaded documents or images may be in any language; give your answer in the user's selected language only. "
-        "When the user shares a link, you may receive extracted text from that page. LinkedIn and Facebook profile URLs may be resolved to profile data; Instagram and Twitter/X URLs use web search results. Use any provided profile or search data to answer questions about the person or account. If you receive '[URL: ...]' with page or profile content below it, you MUST use that content to answer—do NOT say you cannot access external links. If you receive a '[Note: ... could not retrieve the page content]' then say you could not load the page and suggest pasting details or trying again. Reply in the selected language. "
+        "When the user shares a link, you may receive extracted text from that page. LinkedIn and Facebook profile URLs may be resolved to profile data; Instagram and Twitter/X URLs use web search results. Use any provided profile or search data to answer questions about the person or account. If you receive '[URL: ...]' with page or profile content below it, you MUST use that content to answer—do NOT say you cannot access external links. If you also receive '[Additional Google search' or '[YouTube search results' or scoped web search blocks, use them when the page text does not contain the answer. If you receive a '[Note: ... could not retrieve the page content]' then say you could not load the page and suggest pasting details or trying again. Reply in the selected language. "
         "When you receive '[Web search results for your query]' or '[Web search results that may mention the site or your query]' below, use them to give current, real-time answers; summarize or cite from the results as needed. "
+        "When you receive '[Multi-source news context]' below, treat it as trusted fetched context from multiple sources (NewsAPI, state RSS, YouTube, web results). Use it directly for news/headline answers. "
+        "When you receive '[Fact-check context]' below, treat it as primary evidence for binary yes/no and factual questions. Keep the factual verdict consistent across all languages. "
+        "For binary questions, start with a direct 'Yes' or 'No' (translated to the selected language), then give one short evidence line. "
         "When you see '[IMPORTANT: The user asked for the LATEST or LAST post/tweet...]', you MUST use ONLY Result 1 (the first result) as the latest post unless it clearly is not a post/tweet. If results include 'Date:', pick the result with the most recent date. Do NOT use result 2 or 3 as the 'latest'. Present the post text and date clearly. 'Latest' can be from long ago; still show it as their latest. "
         "Do not say things like 'Paste a link and type your question, or just ask anything. I'll read the page and answer.' or similar link-prompt lines. "
         "Give helpful, detailed answers: use a few sentences or a short paragraph when useful. Do not limit yourself to one or two lines unless the question is trivial. "
@@ -793,19 +1411,44 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
                 api_messages.append({"role": "user", "content": content_parts})
 
     web_search_context = None
+    multi_news_context = None
+    life_status_context = None
+    fact_check_context = None
     if messages and messages[-1].get("role") == "user":
         last_query = (messages[-1].get("content") or "").strip()[:300]
+        retrieval_query = _translate_query_to_english(client, last_query, lang_name)
+        multi_news_context = fetch_multi_source_news_context(retrieval_query, lang_name=lang_name)
         serp_key = os.environ.get("SERPAPI_API_KEY") or os.environ.get("GOOGLE_SERP_API_KEY")
+        if serp_key:
+            person_name = _extract_life_status_name(retrieval_query)
+            if person_name:
+                status = fetch_person_life_status(person_name, serp_key)
+                if status in ("dead", "alive"):
+                    life_status_context = (
+                        "[Fact-check for life status]\n"
+                        f"Person: {person_name}\n"
+                        f"Status from web sources: {status.upper()}\n"
+                        "Instruction: For yes/no life-status questions, use this status consistently in any language."
+                    )
+            # Fact-check only for clear lookup/binary questions (not every sentence ending in ?)
+            if _wants_fact_check_context(retrieval_query):
+                fact_bits = fetch_fact_check_context(retrieval_query, serp_key)
+                if fact_bits:
+                    fact_check_context = (
+                        "[Fact-check context]\n"
+                        + fact_bits
+                        + "\nInstruction: Keep factual verdict the same across languages; do not contradict this evidence."
+                    )
         if serp_key and last_query:
             # For "latest post/tweet" on Twitter/Instagram/etc., search with recency bias and strict instructions
-            refined = _refine_query_for_latest_tweet(last_query)
-            search_query = refined if refined else last_query
+            refined = _refine_query_for_latest_tweet(last_query) or _refine_query_for_latest_tweet(retrieval_query)
+            search_query = refined if refined else retrieval_query
             if refined:
                 web_search_context = fetch_web_search(search_query, serp_key, recency_filter="m")
                 if not web_search_context:
                     web_search_context = fetch_web_search(search_query, serp_key)
-            else:
-                web_search_context = fetch_web_search(search_query, serp_key)
+            elif _wants_serp_web_search(last_query):
+                web_search_context = fetch_web_search(retrieval_query, serp_key)
             if web_search_context and refined:
                 web_search_context = (
                     "[IMPORTANT: The user asked for the LATEST or LAST post/tweet from this account. "
@@ -821,8 +1464,14 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
         is_last_user = i == len(messages) - 1 and m.get("role") == "user"
         if is_last_user and reply_lang.lower() == "english":
             content = "[Instruction: You must respond in English only. Do not use Hindi or any other language.]\n\n" + content
-        if (web_search_context or link_context) and is_last_user:
+        if (fact_check_context or life_status_context or multi_news_context or web_search_context or link_context) and is_last_user:
             prepend = ""
+            if fact_check_context:
+                prepend += fact_check_context + "\n\n"
+            if life_status_context:
+                prepend += life_status_context + "\n\n"
+            if multi_news_context:
+                prepend += "[Multi-source news context:]\n\n" + multi_news_context + "\n\n"
             if web_search_context:
                 prepend += "[Web search results for your query:]\n\n" + web_search_context + "\n\n"
             if link_context:
@@ -832,30 +1481,71 @@ def chat_with_llm(messages: list[dict], lang_name: str, session_id: str, is_voic
                     else "[Content extracted from the shared link(s). Use this to answer the user's question.]\n\n"
                 )
                 prepend += intro + link_context + "\n\n"
-            content = prepend + "---\n\nUser's question: " + content
+            # Put the user's words first so the model anchors on intent (like ChatGPT), not on long retrieval blobs.
+            support = prepend.strip()
+            if support:
+                content = (
+                    "### What the user is asking (answer this first)\n"
+                    + content
+                    + "\n\n### Supporting material (optional; use only if relevant)\n"
+                    + support
+                )
+            else:
+                content = "### What the user is asking (answer this first)\n" + content
         api_messages.append({"role": m["role"], "content": content})
 
     try:
         # Allow longer replies when there is link/web context or when conversation has history (for coherent, context-aware answers)
-        has_extra_context = bool(link_context or web_search_context)
-        has_conversation_history = len(messages) > 2
-        max_completion_tokens = 900 if has_extra_context else (700 if has_conversation_history else 600)
-        r = client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-5.3-chat-latest"),
-            messages=api_messages,
-            max_completion_tokens=max_completion_tokens,
-        )
+        has_extra_context = bool(link_context or web_search_context or multi_news_context or life_status_context or fact_check_context)
+        msg_count = len(messages)
+        # More context window for long sessions; still capped by _safe_completion_tokens.
+        if has_extra_context:
+            max_completion_tokens = 1200 if msg_count > 20 else 950
+        else:
+            max_completion_tokens = 900 if msg_count > 20 else (750 if msg_count > 2 else 650)
+        model_candidates = _chat_model_candidates()
+        last_err = None
+        r = None
+        for mdl in model_candidates:
+            try:
+                r = _chat_create_with_token_fallback(
+                    client=client,
+                    model=mdl,
+                    messages=api_messages,
+                    completion_tokens=max_completion_tokens,
+                )
+                break
+            except Exception as e:
+                msg = str(e).lower()
+                if ("model_not_found" in msg) or ("not found" in msg and "model" in msg):
+                    last_err = e
+                    continue
+                raise
+        if r is None:
+            raise last_err if last_err else RuntimeError("No chat model available")
         text = (r.choices[0].message.content or "").strip()
         # When English is selected but the model replied in Indic script, retry once with a strict English-only instruction
         if reply_lang.lower() == "english" and _reply_contains_indic(text):
             api_messages.append({"role": "assistant", "content": text})
             api_messages.append({"role": "user", "content": "You must respond in English only. Give the same answer again in English."})
             try:
-                r2 = client.chat.completions.create(
-                    model=os.environ.get("OPENAI_MODEL", "gpt-5.3-chat-latest"),
-                    messages=api_messages,
-                    max_completion_tokens=max_completion_tokens,
-                )
+                r2 = None
+                for mdl in model_candidates:
+                    try:
+                        r2 = _chat_create_with_token_fallback(
+                            client=client,
+                            model=mdl,
+                            messages=api_messages,
+                            completion_tokens=max_completion_tokens,
+                        )
+                        break
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if ("model_not_found" in msg) or ("not found" in msg and "model" in msg):
+                            continue
+                        raise
+                if r2 is None:
+                    raise RuntimeError("No chat model available")
                 text = (r2.choices[0].message.content or "").strip()
             except Exception:
                 pass
@@ -957,6 +1647,7 @@ def api_chat():
     if urls:
         urls = urls[:MAX_LINKS_PER_MESSAGE]
         parts = []
+        appended_site_search = False
         serp_key = os.environ.get("SERPAPI_API_KEY") or os.environ.get("GOOGLE_SERP_API_KEY")
         want_latest = any(
                 p in (user_message or "").lower()
@@ -1023,6 +1714,15 @@ def api_chat():
                     site_search = fetch_web_search(search_query, serp_key)
                     if site_search:
                         link_context += "\n\n[Web search results that may mention the site or your query:]\n\n" + site_search
+                        appended_site_search = True
+        link_context = augment_link_context_with_web_youtube_fallbacks(
+            link_context,
+            user_message,
+            urls,
+            lang_name,
+            fetch_succeeded=bool(parts),
+            appended_site_search=appended_site_search,
+        )
 
     sid = get_or_create_session_id()
     add_message(sid, "user", user_message)
